@@ -63,7 +63,7 @@ public fun swap_sui_for_arturcoin(
     manager: &mut CoinManager, 
     sui_coin: Coin<SUI>,
     ctx: &mut TxContext
-): Coin<ARTURCOIN> {
+) {
     // 1. Get the value of the incoming SUI coin
     let sui_value = sui_coin.value();
     
@@ -88,15 +88,15 @@ public fun swap_sui_for_arturcoin(
     // Join the remaining balance (holding sui_value_after_fee) to the pool
     manager.sui_pool.join(sui_balance);
 
-    // 5. Return the newly minted ARTURCOIN to the caller
-    new_arturcoin
+    // Instead of returning, transfer the coin to the sender
+    transfer::public_transfer(new_arturcoin, ctx.sender());
 }
 
 public fun burn_arturcoin_for_sui(
     manager: &mut CoinManager,
     arturcoin_to_burn: Coin<ARTURCOIN>,
     ctx: &mut TxContext
-): Coin<SUI> {
+) {
     // 1. Get the value of the incoming ARTURCOIN
     let arturcoin_value = arturcoin_to_burn.value();
 
@@ -132,5 +132,5 @@ public fun burn_arturcoin_for_sui(
     transfer::public_transfer(fee_coin, manager.admin_address);
 
     // 9. Return the remaining SUI coin (holding the net amount) to the caller
-    gross_sui_coin
+    transfer::public_transfer(gross_sui_coin, ctx.sender());
 }
