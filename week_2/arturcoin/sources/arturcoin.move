@@ -5,12 +5,15 @@ use sui::coin::{Self, TreasuryCap, Coin};
 use sui::url;
 use sui::balance::{Self, Balance};
 use sui::sui::SUI;
+// use sui::transfer; // Needed for transfer::public_transfer, freeze_object, share_object
 
 use std::ascii;
 
 public struct ARTURCOIN has drop {}
 
+// Useful constants
 const ARTURCOIN_PER_SUI: u64 = 10; // 1 SUI buys 10 ARTURCOIN
+const FEE_BASIS_POINTS: u64 = 100;
 
 // Errors
 const EInsufficientSuiInPool: u64 = 1; // Error if the pool doesn't have enough SUI
@@ -21,7 +24,9 @@ public struct CoinManager has key, store {
     // Capability to mint ARTURCOIN
     treasury_cap: TreasuryCap<ARTURCOIN>,
     // Pool of SUI collected from swaps, used for burns
-    sui_pool: Balance<SUI>
+    sui_pool: Balance<SUI>,
+    // Address of the admin to send the fee to
+    admin_address: address
 }
 
 fun init(otw: ARTURCOIN, ctx: &mut TxContext) {
@@ -44,7 +49,8 @@ fun init(otw: ARTURCOIN, ctx: &mut TxContext) {
     let manager = CoinManager {
         id: object::new(ctx),
         treasury_cap: treasury_cap, // Move the cap into the manager
-        sui_pool: balance::zero<SUI>() // Start with zero SUI
+        sui_pool: balance::zero<SUI>(), // Start with zero SUI
+        admin_address: ctx.sender()
     };
 
     // Freeze metadata
@@ -60,16 +66,27 @@ public fun swap_sui_for_arturcoin(
 ): Coin<ARTURCOIN> {
     // 1. Get the value of the incoming SUI coin
     let sui_value = sui_coin.value();
+    
+    // 
+    let sui_fee = sui_value * FEE_BASIS_POINTS / 10000;
+
+    // 
+    let sui_value_after_fee = sui_value - sui_fee;
 
     // 2. Calculate the amount of ARTURCOIN to mint based on the rate
-    let arturcoin_to_mint = sui_value * ARTURCOIN_PER_SUI;
+    let arturcoin_to_mint = sui_value_after_fee * ARTURCOIN_PER_SUI;
 
     // 3. Mint the ARTURCOIN using the TreasuryCap stored in the manager
     let new_arturcoin = coin::mint(&mut manager.treasury_cap, arturcoin_to_mint, ctx);
 
-    // 4. Take the user's SUI coin and add its balance to the manager's pool
-    //    The sui_coin variable is consumed here.
-    manager.sui_pool.join(sui_coin.into_balance());
+    // 4. Handle the incoming SUI: split fee, transfer fee, add remainder to pool
+    let mut sui_balance = sui_coin.into_balance(); // Make balance mutable to split from it
+    let fee_balance = sui_balance.split(sui_fee); // Split fee amount off
+    let fee_coin = coin::from_balance(fee_balance, ctx); // Create coin for the fee
+    transfer::public_transfer(fee_coin, manager.admin_address); // Transfer fee to admin
+
+    // Join the remaining balance (holding sui_value_after_fee) to the pool
+    manager.sui_pool.join(sui_balance);
 
     // 5. Return the newly minted ARTURCOIN to the caller
     new_arturcoin
@@ -99,12 +116,21 @@ public fun burn_arturcoin_for_sui(
     //    This consumes the arturcoin_to_burn variable.
     coin::burn(&mut manager.treasury_cap, arturcoin_to_burn);
 
-    // 5. Split the required SUI from the manager's pool
-    let sui_balance_to_return = manager.sui_pool.split(sui_to_return);
+    // Calculate the fee based on the gross amount
+    let sui_fee = sui_to_return * FEE_BASIS_POINTS / 10000;
 
-    // 6. Convert the Balance<SUI> into a Coin<SUI>
-    let sui_coin_to_return = coin::from_balance(sui_balance_to_return, ctx);
+    // 5. Split the *gross* required SUI from the manager's pool
+    let gross_sui_balance = manager.sui_pool.split(sui_to_return);
 
-    // 7. Return the SUI coin to the caller
-    sui_coin_to_return
+    // 6. Convert the gross Balance<SUI> into a Coin<SUI>
+    let mut gross_sui_coin = coin::from_balance(gross_sui_balance, ctx); // Make coin mutable
+
+    // 7. Split the fee amount from the gross coin
+    let fee_coin = gross_sui_coin.split(sui_fee, ctx); // Use coin::split which takes Coin
+
+    // 8. Transfer the fee coin to the admin
+    transfer::public_transfer(fee_coin, manager.admin_address);
+
+    // 9. Return the remaining SUI coin (holding the net amount) to the caller
+    gross_sui_coin
 }
