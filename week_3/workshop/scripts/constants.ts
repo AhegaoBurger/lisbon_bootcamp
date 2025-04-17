@@ -1,0 +1,2 @@
+export const packageId = "0xd2a1ea4ed2ee977209cb31e429d74bce8ca88679baba95606687998410929d59";
+export const vault = "0x0568ace6dcfc8fc3ac4b0f5b6cd2486a00f2a48c8ca525c2cd3ecfbefa09d7ec";
