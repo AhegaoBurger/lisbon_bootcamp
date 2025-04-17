@@ -34,7 +34,7 @@ fun init(otw: ARTURCOIN, ctx: &mut TxContext) {
     let symbol: vector<u8> = b"ARTURCOIN";
     let name: vector<u8> = b"ARTURCOIN";
     let description: vector<u8> = b"This is a very valuable coin, do you know why, cause it's ARTURCOIN";
-    let icon = url::new_unsafe(ascii::string(b"https://img.png"));
+    let icon = url::new_unsafe(ascii::string(b"https://avatars.githubusercontent.com/u/72599811?v=4"));
     let (treasury_cap, metadata) = coin::create_currency<ARTURCOIN>(
         otw,
         decimals,
@@ -60,17 +60,17 @@ fun init(otw: ARTURCOIN, ctx: &mut TxContext) {
 }
 
 public fun swap_sui_for_arturcoin(
-    manager: &mut CoinManager, 
+    manager: &mut CoinManager,
     sui_coin: Coin<SUI>,
     ctx: &mut TxContext
 ) {
     // 1. Get the value of the incoming SUI coin
     let sui_value = sui_coin.value();
-    
-    // 
+
+    //
     let sui_fee = sui_value * FEE_BASIS_POINTS / 10000;
 
-    // 
+    //
     let sui_value_after_fee = sui_value - sui_fee;
 
     // 2. Calculate the amount of ARTURCOIN to mint based on the rate
