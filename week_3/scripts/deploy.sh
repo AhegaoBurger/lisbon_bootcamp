@@ -11,7 +11,7 @@ fi
 # Default to devnet if no network specified
 NETWORK=${1:-devnet}
 
-# Function to check wallet setup
+# Function to check wallet setup and request tokens if needed
 check_wallet() {
     # Check if sui is installed
     if ! command -v sui &> /dev/null
@@ -31,65 +31,147 @@ check_wallet() {
     ACTIVE_ADDRESS=$(sui client active-address)
     echo "Using wallet address: $ACTIVE_ADDRESS"
 
-    # Check wallet balance
-    BALANCE=$(sui client gas --address "$ACTIVE_ADDRESS" | grep -oP "Balance: \K[0-9]+")
-    if [[ -z "$BALANCE" || "$BALANCE" -lt 100000000000 ]]
-    then
-        echo "Error: Insufficient balance for deployment (need at least 0.1 SUI)"
-        echo "Current balance: $BALANCE"
+    # Calculate total balance across all coins
+    echo "Checking wallet balance..."
+    REQUIRED_BALANCE=100000000000
+
+    get_total_balance() {
+        local total=0
+        # Capture both stdout and stderr but only process stdout for balance
+        while read -r amount; do
+            if [[ "$amount" =~ ^[0-9]+$ ]]; then
+                total=$((total + amount))
+            fi
+        done < <(sui client gas "$ACTIVE_ADDRESS" 2>/dev/null | grep "MIST" | awk '{print $2}' | tr -d ',')
+        echo "$total"
+    }
+
+    TOTAL_BALANCE=$(get_total_balance)
+    echo "Current total balance: $TOTAL_BALANCE MIST ($(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI)"
+    
+    if [[ "$TOTAL_BALANCE" -ge "$REQUIRED_BALANCE" ]]; then
+        echo "Have enough SUI ($(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI), proceeding with deployment..."
+        return
+    fi
+
+    echo "Need at least $REQUIRED_BALANCE MIST (0.1 SUI), checking faucet..."
+
+    # Request from faucet
+    sui client faucet
+    echo "Faucet request completed, waiting for transaction..."
+    sleep 3
+    
+    # Recalculate total balance
+    NEW_TOTAL=$(get_total_balance)
+    
+    if [[ "$NEW_TOTAL" -gt "$TOTAL_BALANCE" ]]; then
+        local gained=$((NEW_TOTAL - TOTAL_BALANCE))
+        local gained_sui=$(echo "scale=9; $gained/1000000000" | bc)
+        echo "Successfully received $gained_sui SUI from faucet"
+        TOTAL_BALANCE=$NEW_TOTAL
+        
+        if [[ "$TOTAL_BALANCE" -ge "$REQUIRED_BALANCE" ]]; then
+            echo "Now have enough SUI for deployment"
+        else
+            echo "Warning: Still need more SUI. Have: $(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI"
+            echo "Need: $(echo "scale=9; $REQUIRED_BALANCE/1000000000" | bc) SUI"
+            exit 1
+        fi
+    else
+        echo "Error: Faucet request didn't increase balance"
+        echo "Current total: $(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI"
+        echo "Make sure you're on devnet and try again"
         exit 1
     fi
-    echo "Wallet balance: $BALANCE MIST"
+    
+    echo "Ready to deploy with $(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI"
 }
 
-# Validate network unless in local test mode
-if [[ "$LOCAL_TEST" == false ]]
+# Function to switch network
+switch_network() {
+    local target_network=$1
+    echo "Switching to $target_network..."
+    sui client switch --env $target_network
+}
+
+# Set up environment
+if [[ "$LOCAL_TEST" == true ]]
 then
+    echo "Using local test environment..."
+    check_wallet
+else
     if [[ ! "$NETWORK" =~ ^(devnet|testnet|mainnet)$ ]]
     then
         echo "Error: Network must be devnet, testnet, or mainnet"
         exit 1
     fi
+    
+    # Switch to specified network and check wallet
+    switch_network $NETWORK
     check_wallet
 fi
 
-echo "Deploying to $NETWORK..."
+echo "Deploying to ${LOCAL_TEST:+local}${LOCAL_TEST:-$NETWORK}..."
 
 # Navigate to Move project directory
 cd "$(dirname "$0")/../arturcoin" || exit 1
 
 # Build the contract
 echo "Building contract..."
+sui move build || exit 1
+
+# Publish the contract
+echo "Publishing contract..."
+COMMAND="sui client publish --gas-budget 100000000000"
+
 if [[ "$LOCAL_TEST" == true ]]
 then
-    echo "Local test mode: Skipping actual build"
-    PACKAGE_ID="0x$(openssl rand -hex 32)"
-    COIN_MANAGER_ID="0x$(openssl rand -hex 32)"
+    echo "Local test mode: Publishing to local network..."
 else
-    sui move build || exit 1
-
-    # Publish the contract and capture the output
-    echo "Publishing contract..."
-    PUBLISH_OUTPUT=$(sui client publish --gas-budget 100000000000) || exit 1
-
-    # Extract Package ID using grep and awk
-    PACKAGE_ID=$(echo "$PUBLISH_OUTPUT" | grep -A 1 "Published Objects:" | grep "Package ID:" | awk '{print $3}')
-
-    # Extract Coin Manager ID - it's in the Created Objects section, usually the second or third object
-    COIN_MANAGER_ID=$(echo "$PUBLISH_OUTPUT" | grep -A 4 "Created Objects:" | grep "ID:" | awk 'NR==3 {print $2}')
-
-    # Log the full output for debugging
-    echo "Full publish output:"
-    echo "$PUBLISH_OUTPUT"
+    echo "Publishing to $NETWORK..."
 fi
 
-if [ -z "$PACKAGE_ID" ] || [ -z "$COIN_MANAGER_ID" ]
+PUBLISH_OUTPUT=$(eval "$COMMAND") || exit 1
+
+echo "Publish command output:"
+echo "$PUBLISH_OUTPUT"
+
+# Function to extract hex IDs
+extract_id() {
+    local output="$1"
+    local pattern="$2"
+    local n="$3"
+    
+    # Try different patterns
+    local id
+    id=$(echo "$output" | grep -A 2 "$pattern" | grep -o "0x[a-fA-F0-9]\{64\}" | sed -n "${n}p")
+    if [[ -z "$id" ]]; then
+        id=$(echo "$output" | grep -o "0x[a-fA-F0-9]\{64\}" | sed -n "${n}p")
+    fi
+    echo "$id"
+}
+
+# Extract IDs
+echo "Extracting deployment IDs..."
+PACKAGE_ID=$(extract_id "$PUBLISH_OUTPUT" "Published Objects" "1")
+COIN_MANAGER_ID=$(extract_id "$PUBLISH_OUTPUT" "Created Objects" "2")
+
+# Verify IDs
+if [[ -z "$PACKAGE_ID" ]] || [[ -z "$COIN_MANAGER_ID" ]]
 then
     echo "Error: Failed to extract IDs from publish output"
-    echo "Full publish output:"
+    echo "Raw publish output:"
     echo "$PUBLISH_OUTPUT"
+    echo
+    echo "Attempted to extract:"
+    echo "Package ID: $PACKAGE_ID"
+    echo "Coin Manager ID: $COIN_MANAGER_ID"
     exit 1
 fi
+
+echo "Successfully extracted IDs:"
+echo "Package ID: $PACKAGE_ID"
+echo "Coin Manager ID: $COIN_MANAGER_ID"
 
 # Create deployments directory if it doesn't exist
 DEPLOYMENTS_DIR="../deployments"
