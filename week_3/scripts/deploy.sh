@@ -33,58 +33,86 @@ check_wallet() {
 
     # Calculate total balance across all coins
     echo "Checking wallet balance..."
-    REQUIRED_BALANCE=100000000000
+    # We need 0.1 SUI = 100000000 MIST
+    REQUIRED_BALANCE=100000000
 
-    get_total_balance() {
-        local total=0
-        # Capture both stdout and stderr but only process stdout for balance
-        while read -r amount; do
-            if [[ "$amount" =~ ^[0-9]+$ ]]; then
-                total=$((total + amount))
-            fi
-        done < <(sui client gas "$ACTIVE_ADDRESS" 2>/dev/null | grep "MIST" | awk '{print $2}' | tr -d ',')
-        echo "$total"
+    get_balance_in_mist() {
+        local output
+        # Run the command - consider removing 2>/dev/null during debugging if needed
+        output=$(sui client gas "$ACTIVE_ADDRESS" 2>/dev/null)
+        if [[ -z "$output" ]]; then
+            echo "0" # No output probably means no gas coins
+            return
+        fi
+
+        # Use awk to parse the table:
+        # -F'│' sets the field separator to the vertical bar '│'
+        # /^│ 0x/ filters for lines starting with '│ 0x' (these are the data lines)
+        # {gsub(/ /,"",$3); total+=$3} removes spaces from the 3rd field (MIST balance column)
+        #                               and adds its numeric value to the 'total' variable.
+        # END {print total+0} prints the final total. '+0' ensures '0' is printed if no lines match.
+        local total
+        total=$(echo "$output" | awk -F'│' '/^│ 0x/ {gsub(/[[:space:]]/,"",$3); total+=$3} END {print total+0}')
+
+        # Fallback in case awk produced no output or failed
+        echo "${total:-0}"
     }
 
-    TOTAL_BALANCE=$(get_total_balance)
-    echo "Current total balance: $TOTAL_BALANCE MIST ($(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI)"
-    
+    format_sui_amount() {
+        local mist=$1
+        if [[ $mist -le 0 ]]; then
+            echo "0.00"
+            return
+        fi
+        printf "%.2f" "$(echo "scale=2; $mist/1000000000" | bc)"
+    }
+
+    TOTAL_BALANCE=$(get_balance_in_mist)
+    TOTAL_BALANCE=${TOTAL_BALANCE:-0}
+    TOTAL_SUI=$(format_sui_amount "$TOTAL_BALANCE")
+
+    echo "Current balance: $TOTAL_SUI SUI"
+
     if [[ "$TOTAL_BALANCE" -ge "$REQUIRED_BALANCE" ]]; then
-        echo "Have enough SUI ($(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI), proceeding with deployment..."
+        echo "Have enough SUI for deployment"
         return
     fi
 
-    echo "Need at least $REQUIRED_BALANCE MIST (0.1 SUI), checking faucet..."
+    REQUIRED_SUI=$(format_sui_amount $REQUIRED_BALANCE)
+    echo "Need $REQUIRED_SUI SUI for deployment"
+    echo "Requesting tokens from faucet..."
 
-    # Request from faucet
-    sui client faucet
-    echo "Faucet request completed, waiting for transaction..."
+    FAUCET_OUTPUT=$(sui client faucet 2>&1)
+    if [[ "$FAUCET_OUTPUT" =~ "Success" || "$FAUCET_OUTPUT" =~ "200 OK" ]]; then
+        echo "Faucet request successful"
+    fi
+
+    echo "Waiting for transaction..."
     sleep 3
-    
-    # Recalculate total balance
-    NEW_TOTAL=$(get_total_balance)
-    
+
+    NEW_TOTAL=$(get_balance_in_mist)
+    NEW_TOTAL=${NEW_TOTAL:-0}
+    NEW_SUI=$(format_sui_amount $NEW_TOTAL)
+
     if [[ "$NEW_TOTAL" -gt "$TOTAL_BALANCE" ]]; then
-        local gained=$((NEW_TOTAL - TOTAL_BALANCE))
-        local gained_sui=$(echo "scale=9; $gained/1000000000" | bc)
-        echo "Successfully received $gained_sui SUI from faucet"
-        TOTAL_BALANCE=$NEW_TOTAL
-        
-        if [[ "$TOTAL_BALANCE" -ge "$REQUIRED_BALANCE" ]]; then
-            echo "Now have enough SUI for deployment"
+        GAINED=$((NEW_TOTAL - TOTAL_BALANCE))
+        GAINED_SUI=$(format_sui_amount $GAINED)
+        echo "Received $GAINED_SUI SUI"
+        echo "New balance: $NEW_SUI SUI"
+
+        if [[ "$NEW_TOTAL" -ge "$REQUIRED_BALANCE" ]]; then
+            echo "Ready for deployment"
         else
-            echo "Warning: Still need more SUI. Have: $(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI"
-            echo "Need: $(echo "scale=9; $REQUIRED_BALANCE/1000000000" | bc) SUI"
+            echo "Error: Need $REQUIRED_SUI SUI but only have $NEW_SUI SUI"
             exit 1
         fi
     else
-        echo "Error: Faucet request didn't increase balance"
-        echo "Current total: $(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI"
-        echo "Make sure you're on devnet and try again"
+        echo "Error: Balance did not increase"
+        echo "Current balance: $TOTAL_SUI SUI"
         exit 1
     fi
-    
-    echo "Ready to deploy with $(echo "scale=9; $TOTAL_BALANCE/1000000000" | bc) SUI"
+
+
 }
 
 # Function to switch network
@@ -105,13 +133,17 @@ else
         echo "Error: Network must be devnet, testnet, or mainnet"
         exit 1
     fi
-    
+
     # Switch to specified network and check wallet
     switch_network $NETWORK
     check_wallet
 fi
 
-echo "Deploying to ${LOCAL_TEST:+local}${LOCAL_TEST:-$NETWORK}..."
+if [[ "$LOCAL_TEST" == true ]]; then
+echo "Deploying to local environment..."
+else
+echo "Deploying to $NETWORK..."
+fi
 
 # Navigate to Move project directory
 cd "$(dirname "$0")/../arturcoin" || exit 1
@@ -141,7 +173,7 @@ extract_id() {
     local output="$1"
     local pattern="$2"
     local n="$3"
-    
+
     # Try different patterns
     local id
     id=$(echo "$output" | grep -A 2 "$pattern" | grep -o "0x[a-fA-F0-9]\{64\}" | sed -n "${n}p")
