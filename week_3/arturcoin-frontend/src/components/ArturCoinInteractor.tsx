@@ -9,11 +9,10 @@ import {
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { toast } from "sonner";
 
-// --- Configuration - Replace with your actual IDs ---
-const PACKAGE_ID =
-  "0x52498d7a3dd5eab73f4d39970dd567e12760d0adeefff4508f67fd4870f149a4";
-const COIN_MANAGER_ID =
-  "0xbda61c845a09e08a67fd23f7e4da5c6f6aadd01e71d1ff70a53eaf4c2a886e1a";
+// --- Configuration from environment variables ---
+const PACKAGE_ID = import.meta.env.VITE_PACKAGE_ID;
+const COIN_MANAGER_ID = import.meta.env.VITE_COIN_MANAGER_ID;
+const NETWORK = import.meta.env.VITE_NETWORK || 'devnet';
 const MODULE_NAME = "arturcoin";
 const ARTURCOIN_TYPE = `${PACKAGE_ID}::${MODULE_NAME}::ARTURCOIN`;
 const SWAP_SUI_FUNCTION_NAME = "swap_sui_for_arturcoin";
@@ -253,7 +252,7 @@ export function ArturCoinInteractor() {
           <p style={{ color: "green", marginTop: "10px" }}>
             Success! Tx Digest:{" "}
             <a
-              href={`https://suiexplorer.com/txblock/${swapDigest}?network=devnet`}
+              href={`https://suiexplorer.com/txblock/${swapDigest}?network=${NETWORK}`}
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -304,7 +303,7 @@ export function ArturCoinInteractor() {
           <p style={{ color: "green", marginTop: "10px" }}>
             Success! Tx Digest:{" "}
             <a
-              href={`https://suiexplorer.com/txblock/${burnDigest}?network=devnet`}
+              href={`https://suiexplorer.com/txblock/${burnDigest}?network=${NETWORK}`}
               target="_blank"
               rel="noopener noreferrer"
             >
