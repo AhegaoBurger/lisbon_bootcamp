@@ -11,9 +11,9 @@ import { toast } from "sonner";
 
 // --- Configuration - Replace with your actual IDs ---
 const PACKAGE_ID =
-  "0xe13ba3c4eb89797c79aa7ef705007234720cce64e4ea5179332055699b1ef3b7";
+  "0x52498d7a3dd5eab73f4d39970dd567e12760d0adeefff4508f67fd4870f149a4";
 const COIN_MANAGER_ID =
-  "0x49c2d62eb95c3a17dd2b10ce8f57ca011571cee65ed1636204ec5048186be8f0";
+  "0xbda61c845a09e08a67fd23f7e4da5c6f6aadd01e71d1ff70a53eaf4c2a886e1a";
 const MODULE_NAME = "arturcoin";
 const ARTURCOIN_TYPE = `${PACKAGE_ID}::${MODULE_NAME}::ARTURCOIN`;
 const SWAP_SUI_FUNCTION_NAME = "swap_sui_for_arturcoin";
