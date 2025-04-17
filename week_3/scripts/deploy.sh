@@ -21,7 +21,8 @@ check_wallet() {
     fi
 
     # Check if wallet is set up
-    if ! sui client active-address &> /dev/null
+    # Redirect stderr to stdout for capture, then redirect combined output to /dev/null for check
+    if ! sui client active-address > /dev/null 2>&1
     then
         echo "Error: No active wallet found. Please create or select a wallet with 'sui client'."
         exit 1
@@ -38,7 +39,7 @@ check_wallet() {
 
     get_balance_in_mist() {
         local output
-        # Run the command - consider removing 2>/dev/null during debugging if needed
+        # Run the command - capture stderr to avoid clutter unless debugging
         output=$(sui client gas "$ACTIVE_ADDRESS" 2>/dev/null)
         if [[ -z "$output" ]]; then
             echo "0" # No output probably means no gas coins
@@ -46,11 +47,6 @@ check_wallet() {
         fi
 
         # Use awk to parse the table:
-        # -F'│' sets the field separator to the vertical bar '│'
-        # /^│ 0x/ filters for lines starting with '│ 0x' (these are the data lines)
-        # {gsub(/ /,"",$3); total+=$3} removes spaces from the 3rd field (MIST balance column)
-        #                               and adds its numeric value to the 'total' variable.
-        # END {print total+0} prints the final total. '+0' ensures '0' is printed if no lines match.
         local total
         total=$(echo "$output" | awk -F'│' '/^│ 0x/ {gsub(/[[:space:]]/,"",$3); total+=$3} END {print total+0}')
 
@@ -60,11 +56,18 @@ check_wallet() {
 
     format_sui_amount() {
         local mist=$1
-        if [[ $mist -le 0 ]]; then
+        # Check if mist is a valid integer
+        if ! [[ "$mist" =~ ^[0-9]+$ ]]; then
+            echo "0.00 (invalid input)"
+            return
+        fi
+        # Use bc for floating-point division
+        if [[ "$mist" -le 0 ]]; then
             echo "0.00"
             return
         fi
-        printf "%.2f" "$(echo "scale=2; $mist/1000000000" | bc)"
+        # Ensure scale is sufficient for small amounts, format to 2 decimal places
+        printf "%.2f" "$(echo "scale=10; $mist/1000000000" | bc)"
     }
 
     TOTAL_BALANCE=$(get_balance_in_mist)
@@ -83,12 +86,18 @@ check_wallet() {
     echo "Requesting tokens from faucet..."
 
     FAUCET_OUTPUT=$(sui client faucet 2>&1)
-    if [[ "$FAUCET_OUTPUT" =~ "Success" || "$FAUCET_OUTPUT" =~ "200 OK" ]]; then
-        echo "Faucet request successful"
+    # Check if faucet request likely succeeded (needs refinement based on actual output)
+    if [[ "$FAUCET_OUTPUT" =~ "Success" || "$FAUCET_OUTPUT" =~ "200 OK" || "$FAUCET_OUTPUT" =~ "Request handling in progress" ]]; then
+        echo "Faucet request potentially successful..."
+    else
+        echo "Warning: Faucet request may have failed. Output:"
+        echo "$FAUCET_OUTPUT"
+        # Optionally exit here if faucet is critical and failed
+        # exit 1
     fi
 
-    echo "Waiting for transaction..."
-    sleep 3
+    echo "Waiting for transaction to process..."
+    sleep 5 # Increased wait time slightly
 
     NEW_TOTAL=$(get_balance_in_mist)
     NEW_TOTAL=${NEW_TOTAL:-0}
@@ -103,98 +112,154 @@ check_wallet() {
         if [[ "$NEW_TOTAL" -ge "$REQUIRED_BALANCE" ]]; then
             echo "Ready for deployment"
         else
-            echo "Error: Need $REQUIRED_SUI SUI but only have $NEW_SUI SUI"
+            echo "Error: Faucet request succeeded but balance ($NEW_SUI SUI) is still less than required ($REQUIRED_SUI SUI)."
             exit 1
         fi
     else
-        echo "Error: Balance did not increase"
+        echo "Error: Balance did not increase after faucet request."
         echo "Current balance: $TOTAL_SUI SUI"
+        echo "Faucet output was:"
+        echo "$FAUCET_OUTPUT"
         exit 1
     fi
-
-
 }
 
 # Function to switch network
 switch_network() {
     local target_network=$1
     echo "Switching to $target_network..."
-    sui client switch --env $target_network
+    if ! sui client switch --env "$target_network"; then
+        echo "Error: Failed to switch to network '$target_network'."
+        exit 1
+    fi
+    echo "Switched to $target_network."
 }
 
-# Set up environment
+# ---- Determine Network Name for Files ----
+# Use 'local' for file names if --local flag is set, otherwise use the specified network
+if [[ "$LOCAL_TEST" == true ]]; then
+    JSON_NETWORK_NAME="local"
+else
+    JSON_NETWORK_NAME="$NETWORK"
+fi
+
+# ---- Environment Setup ----
 if [[ "$LOCAL_TEST" == true ]]
 then
     echo "Using local test environment..."
+    # No network switch needed, just check wallet
     check_wallet
 else
+    # Validate network name for non-local deployments
     if [[ ! "$NETWORK" =~ ^(devnet|testnet|mainnet)$ ]]
     then
-        echo "Error: Network must be devnet, testnet, or mainnet"
+        echo "Error: Network must be devnet, testnet, or mainnet (provided: '$NETWORK')"
         exit 1
     fi
-
     # Switch to specified network and check wallet
-    switch_network $NETWORK
+    switch_network "$NETWORK"
     check_wallet
 fi
 
+# ---- Deployment ----
 if [[ "$LOCAL_TEST" == true ]]; then
-echo "Deploying to local environment..."
+    echo "Deploying to local environment..."
 else
-echo "Deploying to $NETWORK..."
+    echo "Deploying to $NETWORK..."
 fi
 
-# Navigate to Move project directory
-cd "$(dirname "$0")/../arturcoin" || exit 1
+# Navigate to Move project directory (relative to script location)
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+PROJECT_DIR="$SCRIPT_DIR/../arturcoin"
+
+echo "Changing directory to $PROJECT_DIR"
+cd "$PROJECT_DIR" || { echo "Error: Failed to change directory to $PROJECT_DIR"; exit 1; }
 
 # Build the contract
 echo "Building contract..."
-sui move build || exit 1
+if ! sui move build; then
+    echo "Error: sui move build failed."
+    exit 1
+fi
+echo "Build successful."
 
 # Publish the contract
 echo "Publishing contract..."
-COMMAND="sui client publish --gas-budget 100000000000"
+COMMAND="sui client publish --gas-budget 10000000000" # 10 SUI
 
 if [[ "$LOCAL_TEST" == true ]]
 then
     echo "Local test mode: Publishing to local network..."
+    # Add any specific flags for local publish if needed, e.g., --skip-dependency-verification might be okay locally
+    # COMMAND="$COMMAND --skip-dependency-verification"
 else
     echo "Publishing to $NETWORK..."
+    # Consider adding --skip-dependency-verification or --verify-deps based on needs for non-local
 fi
 
-PUBLISH_OUTPUT=$(eval "$COMMAND") || exit 1
+# --- MODIFIED PUBLISH EXECUTION WITH DEBUGGING ---
+echo "DEBUG: Running command: $COMMAND"
+# Execute the command and capture its output (stdout and stderr combined)
+PUBLISH_OUTPUT=$(eval "$COMMAND" 2>&1)
+PUBLISH_EXIT_CODE=$? # Capture exit code IMMEDIATELY
+echo "DEBUG: Publish command finished with exit code: $PUBLISH_EXIT_CODE"
 
-echo "Publish command output:"
+# Explicitly check exit code
+if [[ "$PUBLISH_EXIT_CODE" -ne 0 ]]; then
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "ERROR: 'sui client publish' failed with exit code $PUBLISH_EXIT_CODE!"
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "-------------------- Failed Publish Output START --------------------"
+    echo "$PUBLISH_OUTPUT" # Print captured output (which includes stderr now)
+    echo "-------------------- Failed Publish Output END ----------------------"
+    exit 1 # Exit on failure
+fi
+
+# If we reach here, publish command returned exit code 0
+echo "Publish command seemingly successful (Exit Code 0). Full Output:"
+echo "-------------------- Publish Output START --------------------"
 echo "$PUBLISH_OUTPUT"
+echo "-------------------- Publish Output END ----------------------"
+# --- END MODIFIED PUBLISH EXECUTION ---
 
-# Function to extract hex IDs
+
+# Function to extract hex IDs (keep as is, but it now processes output from successful command)
 extract_id() {
     local output="$1"
-    local pattern="$2"
-    local n="$3"
+    local pattern="$2" # e.g., "Published Objects" or "Created Objects"
+    local n="$3"       # e.g., 1 for first ID, 2 for second
 
-    # Try different patterns
+    # Try to find the pattern and get the Nth 64-char hex string after it
+    # This is still fragile if output format changes significantly
     local id
-    id=$(echo "$output" | grep -A 2 "$pattern" | grep -o "0x[a-fA-F0-9]\{64\}" | sed -n "${n}p")
+    # Look for the pattern, take the next few lines, find hex strings, get the Nth one
+    id=$(echo "$output" | grep -A 5 "$pattern" | grep -o '0x[a-fA-F0-9]\{64\}' | sed -n "${n}p")
+
+    # Fallback: If the pattern wasn't found or didn't yield results, just search the whole output
     if [[ -z "$id" ]]; then
-        id=$(echo "$output" | grep -o "0x[a-fA-F0-9]\{64\}" | sed -n "${n}p")
+         echo "DEBUG: Pattern '$pattern' not found or no ID after it. Searching entire output." >&2
+         id=$(echo "$output" | grep -o '0x[a-fA-F0-9]\{64\}' | sed -n "${n}p")
     fi
     echo "$id"
 }
 
-# Extract IDs
+# ---- Extract IDs ----
 echo "Extracting deployment IDs..."
+# Note: Adjust '1' and '2' if the order changes in publish output
 PACKAGE_ID=$(extract_id "$PUBLISH_OUTPUT" "Published Objects" "1")
+# CoinManager is usually the second *Created* object after the UpgradeCap
 COIN_MANAGER_ID=$(extract_id "$PUBLISH_OUTPUT" "Created Objects" "2")
 
-# Verify IDs
+# ---- Verify IDs ----
 if [[ -z "$PACKAGE_ID" ]] || [[ -z "$COIN_MANAGER_ID" ]]
 then
-    echo "Error: Failed to extract IDs from publish output"
-    echo "Raw publish output:"
-    echo "$PUBLISH_OUTPUT"
-    echo
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "Error: Failed to extract IDs from successful publish output."
+    echo "The 'sui client publish' command finished without error (Exit Code 0),"
+    echo "but the expected patterns ('Published Objects', 'Created Objects')"
+    echo "or the 0x... IDs were not found in the expected places."
+    echo "Check the full publish output above for the correct structure and IDs."
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "Attempted to extract:"
     echo "Package ID: $PACKAGE_ID"
     echo "Coin Manager ID: $COIN_MANAGER_ID"
@@ -205,48 +270,63 @@ echo "Successfully extracted IDs:"
 echo "Package ID: $PACKAGE_ID"
 echo "Coin Manager ID: $COIN_MANAGER_ID"
 
+# ---- Update Configuration Files ----
+# Navigate back to the parent directory where 'deployments' and 'arturcoin-frontend' are expected
+cd "$SCRIPT_DIR/.." || { echo "Error: Failed to navigate back to project root from $SCRIPT_DIR"; exit 1; }
+
 # Create deployments directory if it doesn't exist
-DEPLOYMENTS_DIR="../deployments"
+DEPLOYMENTS_DIR="deployments"
 mkdir -p "$DEPLOYMENTS_DIR"
 
+# Use JSON_NETWORK_NAME for the file name
+JSON_FILE="$DEPLOYMENTS_DIR/$JSON_NETWORK_NAME.json"
+echo "Updating deployment file: $JSON_FILE"
+
 # Save to JSON file
-cat > "$DEPLOYMENTS_DIR/$NETWORK.json" << EOF
+cat > "$JSON_FILE" << EOF
 {
   "packageId": "$PACKAGE_ID",
   "coinManagerId": "$COIN_MANAGER_ID",
-  "network": "$NETWORK",
+  "network": "$JSON_NETWORK_NAME",
   "deploymentDate": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 }
 EOF
 
 # Update frontend .env file
-cat > "../arturcoin-frontend/.env" << EOF
-VITE_NETWORK=$NETWORK
+FRONTEND_ENV_FILE="arturcoin-frontend/.env"
+echo "Updating frontend environment file: $FRONTEND_ENV_FILE"
+# Use JSON_NETWORK_NAME for VITE_NETWORK as well
+cat > "$FRONTEND_ENV_FILE" << EOF
+VITE_NETWORK=$JSON_NETWORK_NAME
 VITE_PACKAGE_ID=$PACKAGE_ID
 VITE_COIN_MANAGER_ID=$COIN_MANAGER_ID
 EOF
 
+# ---- Final Output ----
+echo # Newline for readability
 if [[ "$LOCAL_TEST" == true ]]
 then
-    echo "Local test completed!"
-    echo "Generated test IDs:"
+    echo "Local test deployment completed!"
 else
-    echo "Deployment successful!"
-    echo "Network: $NETWORK"
+    echo "Deployment to $NETWORK successful!"
 fi
 
+echo "Network used for files: $JSON_NETWORK_NAME"
 echo "Package ID: $PACKAGE_ID"
 echo "Coin Manager ID: $COIN_MANAGER_ID"
 echo
 echo "Configuration files updated:"
-echo "- deployments/$NETWORK.json"
-echo "- arturcoin-frontend/.env"
+echo "- $JSON_FILE"
+echo "- $FRONTEND_ENV_FILE"
 
 # Print instructions for testing
 if [[ "$LOCAL_TEST" == true ]]
 then
     echo
-    echo "Local test mode: Files were updated with randomly generated IDs"
-    echo "To test the actual deployment, run without --local flag:"
-    echo "./deploy.sh [network]"
+    echo "Local test mode: Files were updated with the generated IDs."
+    echo "Remember to restart your frontend dev server if it was running."
 fi
+
+echo
+echo "Deployment script finished."
+exit 0 # Explicitly exit with success
