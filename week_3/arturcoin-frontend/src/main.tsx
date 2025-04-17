@@ -12,6 +12,7 @@ import { getFullnodeUrl } from "@mysten/sui.js/client";
 import "@mysten/dapp-kit/dist/index.css"; // Import default dapp-kit styles
 import "./index.css"; // Your own global styles
 import { Toaster } from "sonner";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 // Configure connection to Sui Devnet
 const { networkConfig } = createNetworkConfig({
@@ -20,16 +21,19 @@ const { networkConfig } = createNetworkConfig({
   // testnet: { url: getFullnodeUrl('testnet') },
   // mainnet: { url: getFullnodeUrl('mainnet') },
 });
+const queryClient = new QueryClient();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <Toaster />
-    <SuiClientProvider networks={networkConfig} defaultNetwork="devnet">
-      <WalletProvider autoConnect={false}>
-        {" "}
-        {/* Set autoConnect={true} if desired */}
-        <App />
-      </WalletProvider>
-    </SuiClientProvider>
+    <QueryClientProvider client={queryClient}>
+      <SuiClientProvider networks={networkConfig} defaultNetwork="devnet">
+        <WalletProvider autoConnect={false}>
+          {" "}
+          {/* Set autoConnect={true} if desired */}
+          <App />
+        </WalletProvider>
+      </SuiClientProvider>
+    </QueryClientProvider>
   </React.StrictMode>,
 );

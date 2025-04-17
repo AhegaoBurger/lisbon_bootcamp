@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@mysten/dapp-kit": "^0.15.5",
+    "@mysten/sui": "^1.27.1",
     "@mysten/sui.js": "^0.54.1",
+    "@tanstack/react-query": "^5.74.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "sonner": "^2.0.3"
