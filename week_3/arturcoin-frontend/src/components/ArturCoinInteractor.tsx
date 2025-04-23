@@ -8,10 +8,11 @@ import {
 } from "@mysten/dapp-kit";
 import { TransactionBlock } from "@mysten/sui.js/transactions";
 import { toast } from "sonner";
+import { packageId, coinManager} from "../constants";
 
 // --- Configuration from environment variables ---
-const PACKAGE_ID = import.meta.env.VITE_PACKAGE_ID;
-const COIN_MANAGER_ID = import.meta.env.VITE_COIN_MANAGER_ID;
+const PACKAGE_ID = packageId;
+const COIN_MANAGER_ID = coinManager;
 const NETWORK = import.meta.env.VITE_NETWORK || 'devnet';
 const MODULE_NAME = "arturcoin";
 const ARTURCOIN_TYPE = `${PACKAGE_ID}::${MODULE_NAME}::ARTURCOIN`;
