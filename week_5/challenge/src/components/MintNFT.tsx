@@ -10,9 +10,11 @@ import {
   VStack,
   useToast,
   Text,
+  Textarea,
 } from '@chakra-ui/react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
+import { PACKAGE_ID, MINT_CAP_ID, MODULES, FUNCTIONS } from '../constants'
 
 export function MintNFT() {
   const queryClient = useQueryClient()
@@ -22,11 +24,12 @@ export function MintNFT() {
   const toast = useToast()
 
   const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
   const [imageUrl, setImageUrl] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
   const handleMint = async () => {
-    if (!name || !imageUrl) {
+    if (!name || !imageUrl || !description) {
       toast({
         title: 'Error',
         description: 'Please fill in all fields',
@@ -54,12 +57,13 @@ export function MintNFT() {
       const tx = new Transaction()
       tx.setSender(account.address)
 
-      // Add your NFT minting move call here
-      // This is just an example - you'll need to replace with your actual package and module
+      // Call the mint function from your NFT contract
       const nft = tx.moveCall({
-        target: '0x...::nft::mint', // Replace with your package ID and module
+        target: `${PACKAGE_ID}::${MODULES.NFT}::${FUNCTIONS.MINT}`,
         arguments: [
+          tx.object(MINT_CAP_ID),
           tx.pure.string(name),
+          tx.pure.string(description),
           tx.pure.string(imageUrl),
           tx.object(SUI_CLOCK_OBJECT_ID),
         ],
@@ -93,6 +97,7 @@ export function MintNFT() {
         })
 
         setName('')
+        setDescription('')
         setImageUrl('')
       } else {
         throw new Error('Transaction failed')
@@ -119,7 +124,7 @@ export function MintNFT() {
     <Box>
       <Text fontSize="xl" mb={4}>Mint New NFT</Text>
       <VStack spacing={4} align="stretch">
-        <FormControl>
+        <FormControl isRequired>
           <FormLabel>NFT Name</FormLabel>
           <Input
             value={name}
@@ -128,7 +133,17 @@ export function MintNFT() {
           />
         </FormControl>
 
-        <FormControl>
+        <FormControl isRequired>
+          <FormLabel>Description</FormLabel>
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Enter NFT description..."
+            rows={3}
+          />
+        </FormControl>
+
+        <FormControl isRequired>
           <FormLabel>Image URL</FormLabel>
           <Input
             value={imageUrl}

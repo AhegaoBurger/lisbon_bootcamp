@@ -1,6 +1,7 @@
 import { useCurrentAccount, useSuiClientQuery } from '@mysten/dapp-kit'
 import { formatAddress } from '@mysten/sui/utils'
 import { Box, SimpleGrid, Text, Image, Link, VStack, Spinner } from '@chakra-ui/react'
+import { PACKAGE_ID, EXPLORER_URL, NETWORK } from '../constants'
 
 export function OwnedObjects() {
   const account = useCurrentAccount()
@@ -8,6 +9,9 @@ export function OwnedObjects() {
     'getOwnedObjects',
     {
       owner: account?.address as string,
+      filter: {
+        StructType: `${PACKAGE_ID}::nft::Collection`,
+      },
       options: {
         showDisplay: true,
       },
@@ -40,6 +44,7 @@ export function OwnedObjects() {
             const display = object.data?.display?.data as {
               image_url?: string
               name?: string
+              description?: string
             }
             return (
               <VStack
@@ -64,8 +69,13 @@ export function OwnedObjects() {
                 <Text fontSize="lg" fontWeight="bold">
                   {display?.name || 'Unnamed NFT'}
                 </Text>
+                {display?.description && (
+                  <Text fontSize="sm" color="gray.600">
+                    {display.description}
+                  </Text>
+                )}
                 <Link
-                  href={`https://suiexplorer.com/object/${object.data?.objectId}`}
+                  href={`${EXPLORER_URL.DEVNET}/${object.data?.objectId}`}
                   isExternal
                   color="blue.500"
                   fontSize="sm"
