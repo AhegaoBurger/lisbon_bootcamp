@@ -14,7 +14,7 @@ import { packageId, coinManager } from "../constants";
 // --- Configuration from environment variables ---
 const PACKAGE_ID = packageId;
 const COIN_MANAGER_ID = coinManager;
-const NETWORK = import.meta.env.VITE_NETWORK || "devnet";
+// const NETWORK = import.meta.env.VITE_NETWORK || "devnet";
 const MODULE_NAME = "arturcoin";
 const ARTURCOIN_TYPE = `${PACKAGE_ID}::${MODULE_NAME}::ARTURCOIN`;
 const SWAP_SUI_FUNCTION_NAME = "swap_sui_for_arturcoin";
