@@ -131,6 +131,7 @@ public fun admin_airdrop(
     assert!(state.pre_paid.contains(recipient), ENoSuchAddress);
     let now = clock.timestamp_ms();
     let uid = object::new(ctx);
+    let _id = uid.to_inner();
     let nft = Dropout {
         id: uid,
         name,
