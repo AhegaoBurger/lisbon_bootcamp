@@ -1,7 +1,7 @@
 import { useCurrentAccount, useSuiClientQuery } from '@mysten/dapp-kit'
 import { formatAddress } from '@mysten/sui/utils'
 import { Box, SimpleGrid, Text, Image, Link, VStack, Spinner } from '@chakra-ui/react'
-import { PACKAGE_ID, EXPLORER_URL, NETWORK } from '../constants'
+import { PACKAGE_ID, EXPLORER_URL } from '../constants'
 
 export function OwnedObjects() {
   const account = useCurrentAccount()
