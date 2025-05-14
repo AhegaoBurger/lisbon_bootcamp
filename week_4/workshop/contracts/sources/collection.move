@@ -5,12 +5,11 @@ use std::string::String;
 use contract::gold::GOLD;
 
 use sui::coin::Coin;
-use sui::balance::Balance;
+use sui::balance::{Self, Balance};
 use sui::clock::Clock;
 use sui::display;
 use sui::package;
-use sui::table::Table;
-
+use sui::table::{Self, Table};
 
 
 // Errors
@@ -20,6 +19,7 @@ const ETooLate: u64 = 2;
 
 
 public struct COLLECTION has drop {}
+
 public struct State has key {
     id: UID,
     whitelist: Table<address, bool>,
@@ -27,6 +27,7 @@ public struct State has key {
     income: Balance<GOLD>,
     initial_price: u64,
     expiration: u64,
+    normal_price: u64
     // nfts: Table<ID, Dropout>
 }
 
@@ -75,11 +76,22 @@ fun init(otw: COLLECTION, ctx: &mut TxContext) {
         id: object::new(ctx)
     };
 
+    let state = State {
+        id: object::new(ctx),
+        whitelist: table::new<address, bool>(ctx),
+        pre_paid: table::new<address, bool>(ctx),
+        income: balance::zero<GOLD>(),
+        initial_price: 1_000_000_000,
+        expiration: 0,
+        normal_price: 4_000_000_000
+    };
+
     // TODO: Create a State object
     let sender = ctx.sender();
     transfer::public_transfer(disp, sender);
     transfer::public_transfer(publisher, sender);
     transfer::transfer(cap, sender);
+    transfer::share_object(state);
 }
 
 
@@ -119,7 +131,6 @@ public fun admin_airdrop(
     assert!(state.pre_paid.contains(recipient), ENoSuchAddress);
     let now = clock.timestamp_ms();
     let uid = object::new(ctx);
-    let id = uid.to_inner();
     let nft = Dropout {
         id: uid,
         name,
@@ -150,6 +161,40 @@ public fun pre_pay(state: &mut State, coin: Coin<GOLD>, clock: &Clock, ctx: &TxC
 
 }
 
+// example of directly buying an NFT
+// This example is vulnerable because any user can call it and they can input any name and any image_url
+public fun buy(
+    state: &mut State,
+    name: String,
+    image_url: String,
+    coin: Coin<GOLD>,
+    clock: &Clock,
+    ctx: &mut TxContext
+): Dropout {
+    assert!(state.normal_price == coin.value(), EWrongAmount);
+    state.income.join(coin.into_balance());
+    let nft_id = object::new(ctx);
+    let random = nft_id.to_address().to_u256();
+    let mut rarity = b"common".to_string();
+    if (random % 13 == 0) {
+        rarity = b"rare".to_string()
+    };
+    if (random % 29 == 0) {
+        rarity = b"epic".to_string()
+    };
+    if (random % 144 == 0) {
+        rarity = b"legendary".to_string()
+    };
+    Dropout {
+        id: nft_id,
+        name,
+        rarity,
+        minted_at: clock.timestamp_ms(),
+        image_url,
+        description: b"A dropout minted on demand!".to_string()
+    }
+}
+
 
 
 
@@ -159,8 +204,3 @@ public fun init_for_testing(ctx: &mut TxContext) {
     let one_time_w = COLLECTION {};
     init(one_time_w, ctx);
 }
-
-
-
-
-
